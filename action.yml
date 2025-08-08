@@ -157,7 +157,7 @@ runs:
         fi
         echo "--- Changes detected."
 
-        # Create a new branch
+        # ============== Create a new branch ==============
         echo "--- Creating branch for the changes"
         datetime=$(date +"%Y-%m-%d-%H%M")
         featureBranch="image-update-$datetime"
@@ -172,6 +172,8 @@ runs:
         # Push the branch
         git push origin $featureBranch
 
+
+        # ============== Create Pull Request ==============
         gh --version
         if [ $? -ne 0 ]; then
           echo "Command 'gh' not found, unable to create pr"
@@ -194,24 +196,16 @@ runs:
         # echo "labels-for-pr = ${{ inputs.labels-for-pr }}"
         # echo "featureBranch = $featureBranch"
         # echo "raise-pr-against = ${{ inputs.raise-pr-against }}"
-        echo "1"
-        echo "2"
         # if [[ "$prLabels" == "" ]]; then
-          echo "3"
           echo "--- No Labels"
-          echo "4"
           echo "gh pr create --title \"$prTitle\" --body \"This PR adds a new feature to the project.\" --head $featureBranch --base $prAgainst"
-          echo "5"
           pullRequestNumber=$(gh pr create --title "$prTitle"  \
             --body "This PR adds a new feature to the project."  \
             --head $featureBranch --base ${{ inputs.raise-pr-against }} \
             )
         # else
-        #   echo "a"
         #   echo "--- Has Labels"
-        #   echo "b"
         #   echo "gh pr create --title \"$prTitle\" --body \"This PR adds a new feature to the project.\" --head $featureBranch --label \"$prLabels\" --base $prAgainst"
-        #   echo "c"
         #   pullRequestNumber=$(gh pr create --title "$prTitle"  \
         #     --label "$prLabels" \
         #     --body "This PR adds a new feature to the project."  \
