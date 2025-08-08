@@ -1,0 +1,158 @@
+# Copyright 2023 Chainguard, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Update the image digest'
+description: 'Update the image digest when have a mutating tag'
+
+inputs:
+  working-dir:
+    description: Working directory to run the digestabot, to run in a specific path, if not set will run from the root
+    required: false
+    default: .
+  token:
+    description: 'GITHUB_TOKEN or a `repo` scoped Personal Access Token (PAT)'
+    required: true
+    default: ${{ github.token }}
+  signoff:
+    description: 'Add `Signed-off-by` line by the committer at the end of the commit log message.'
+    default: false
+  author:
+    description: >
+      The author name and email address in the format `Display Name <email@address.com>`.
+      Defaults to the user who triggered the workflow run.
+    default: '${{ github.actor }} <${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com>'
+  committer:
+    description: >
+      The committer name and email address in the format `Display Name <email@address.com>`.
+      Defaults to the GitHub Actions bot user.
+    default: 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
+  labels-for-pr:
+    description: 'A comma or newline separated list of labels to be used in the pull request.'
+    default: automated pr, kind/cleanup, release-note-none
+  branch-for-pr:
+    description: 'The pull request branch name.'
+    default: 'update-digests'
+  title-for-pr:
+    description: 'The title of the pull request.'
+    default: 'Update images digests'
+  description-for-pr:
+    description: 'The description of the pull request.'
+    default: |
+      Update images digests
+
+      ```release-note
+      NONE
+      ```
+  commit-message:
+    description: 'The message to use when committing changes.'
+    default: 'Automated: Digest Update'
+  create-pr:
+    description: 'Create a PR or just keep the changes locally.'
+    default: true
+  use-gitsign:
+    description: 'Use gitsign to sign commits.'
+    default: 'true'
+
+outputs:
+  pull_request_number:
+    description: "Pull Request Number"
+    value: ${{ steps.pull_request.outputs.pull-request-number }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+
+    - shell: bash
+      run: |
+        # disable the errexit github enable that by default
+        set +o errexit
+        while IFS= read -r -d '' file; do
+          if [[ "$file" == *testdata* ]]; then
+            echo "Skipping testdata ${file}"
+            continue
+          fi
+
+          # Extract all image references and their digests
+          mapfile -t image_lines < <(grep -i -E '[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[a-z0-9]+' "$file" || true)
+
+          for line in "${image_lines[@]}"; do
+            image=$(echo "$line" | cut -d @ -f1 | rev | cut -d = -f1 | cut -d ' ' -f1 | cut -d '"' -f1 | rev | sed -e "s/^docker:\/\///" | tr -d '' | tr -d '\t')
+            digest=$(echo "$line"| cut -d @ -f2 | cut -d ' ' -f1 | cut -d '"' -f1 | tr -d '' | tr -d '\t')
+
+            if [[ "$image" != *":"* ]]; then
+              echo "Image $image in file $file does not have a tag, ignoring..."
+              continue
+            fi
+            if [[ "$image" == *\.local:* ]]; then
+              echo "Skipping local registry image $image"
+              continue
+            fi
+
+            echo "Processing $image in file $file"
+
+            updated_digest=
+            crane digest "$image" > digest.log 2> logerror.txt
+            if [ $? -eq 0 ]; then
+                updated_digest=$(cat digest.log)
+            else
+                ERRMSG="Failed to retrieve digest info for $image"
+                echo "$ERRMSG"
+                echo "$ERRMSG" >> "$GITHUB_STEP_SUMMARY"
+                cat logerror.txt >> "$GITHUB_STEP_SUMMARY"
+            fi
+            rm -f logerror.txt
+            rm -f digest.log
+
+            if [ "$updated_digest" != "$digest" ] && [ -n "$updated_digest" ]; then
+              echo "Digest $digest for image $image is different, new digest is $updated_digest, updating..."
+              sed -i -e "s|$image@$digest|$image@$updated_digest|g" "$file"
+            fi
+          done
+        done < <(find "${{ inputs.working-dir }}" -type f \( -name "*.yaml" -o -name "*.yml" -o -name "Dockerfile*" -o -name "Makefile*" -o -name "*.sh" \) -print0)
+
+    - name: Check workspace
+      id: create_pr_update
+      env:
+        CREATE_PR: ${{ inputs.create-pr }}
+      shell: bash
+      run: |
+        git diff --stat
+        echo "create_pr_update=false" >> $GITHUB_OUTPUT
+        if [[ $(git diff --stat) != '' ]] && [[ "${CREATE_PR}" == 'true' ]]; then
+          echo "create_pr_update=true" >> $GITHUB_OUTPUT
+          echo "diff<<EOF" >> "${GITHUB_OUTPUT}"
+          git diff >> "${GITHUB_OUTPUT}"
+          echo "EOF" >> "${GITHUB_OUTPUT}"
+        fi
+
+    # Configure gitsign for signed commits
+    - uses: chainguard-dev/actions/setup-gitsign@57cb0b7560d9b9b081c15ac5ef689f73f4dda03e # main branch as of 2024-08-02
+      if: ${{ steps.create_pr_update.outputs.create_pr_update == 'true' && inputs.use-gitsign == 'true' }}
+
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@5e914681df9dc83aa4e4905692ca88beb2f9e91f # v7.0.5
+      if: ${{ steps.create_pr_update.outputs.create_pr_update == 'true' }}
+      id: pull_request
+      with:
+        token: ${{ inputs.token }}
+        commit-message: ${{ inputs.commit-message }}
+        title: ${{ inputs.title-for-pr }}
+        body: |
+          ${{ inputs.description-for-pr }}
+
+          ## Changes
+          <details>
+
+          ```diff
+          ${{ steps.create_pr_update.outputs.diff }}
+          ```
+
+          </details>
+        labels: ${{ inputs.labels-for-pr }}
+        branch: ${{ inputs.branch-for-pr }}
+        signoff: ${{ inputs.signoff }}
+        committer: ${{ inputs.committer }}
+        author: ${{ inputs.author }}
+        sign-commits: ${{ inputs.use-gitsign != 'true' }} # Sign commits with github if gitsign is not configured
+        delete-branch: true
