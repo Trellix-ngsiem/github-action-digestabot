@@ -1,0 +1,222 @@
+description: Simple Hello sample
+
+inputs:
+  working-dir:
+    description: Working directory to run the digestabot, to run in a specific path, if not set will run from the root
+    required: false
+    default: .
+  token:
+    description: "GITHUB_TOKEN or a `repo` scoped Personal Access Token (PAT)"
+    required: true
+    default: ${{ github.token }}
+  labels-for-pr:
+    description: "A comma or newline separated list of labels to be used in the pull request."
+    required: false
+    default: ""
+  raise-pr-against:
+    description: "Branch name for the PR to be raised against"
+    required: false
+    default: "main"
+  title-for-pr:
+    description: "The title of the pull request."
+    required: false
+    default: "Update image digest(s)"
+  description-for-pr:
+    description: "The description of the pull request."
+    required: false
+    default: |
+      Update images digests
+  commit-message:
+    description: "The message to use when committing changes."
+    required: false
+    default: "DigestBot: Update images digests"
+  github_host:
+    description: "Github host to login into."
+    required: false
+    default: "github.trellix.com"
+  github_protocol:
+    description: "Github protocol to use for gh auth login, either https or ssh"
+    required: false
+    default: "https"
+
+outputs:
+  pull_request_url:
+    description: "Pull Request Url"
+    value: ${{ steps.trellix-digestbot-pr.outputs.url }}
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      id: trellix-digestbot-crane
+      name: Trellix Digestbot - install GO Crane
+      run: |
+        # disable the errexit github enable that by default
+        set +o errexit
+
+        echo "--- Attempt download of Crane"
+        # OS=${{ runner.os }}
+        # if [[  ${OS,,} != "Linux" ]]; then
+        #   echo "OS $OS detected.  Only linux supported at this time"
+        #   exit 1
+        # fi
+        PLATFORM=$(uname -m)
+        if [[ "$PLATFORM" =~ (aarch64|arm64) ]] ; then
+          ARCHIVE=go-containerregistry_Linux_arm64.tar.gz
+        else
+          ARCHIVE=go-containerregistry_Linux_x86_64.tar.gz
+        fi
+
+        # TODO: Need to move this to a different location.
+        wget https://artifactory.trellix.com:443/artifactory/perinola-local/github-actions/crane/0.20.2/${ARCHIVE}
+        if [ $? -ne 0 ]; then
+          echo "Failed to download Crane"
+          exit 1
+        fi
+
+        echo "--- untar the binary."
+        tar xf ./${ARCHIVE} crane
+        if [ $? -ne 0 ]; then
+          echo "Failed to extract Crane"
+          exit 1
+        fi
+
+        rm ./${ARCHIVE}
+        echo "--- Successfully downloaded Crane"
+
+    - shell: bash
+      id: trellix-digestbot-digest-check
+      name: Trellix Digestbot - Checking for image updates
+      run: |
+        # disable the errexit github enable that by default
+        set +o errexit
+        echo "--- Checking for Image digest updates"
+
+        while IFS= read -r -d '' file; do
+            if [[ "$file" == *testdata* ]]; then
+                echo "Skipping testdata ${file}"
+                continue
+            fi
+
+            # Extract all image references and their digests
+            mapfile -t image_lines < <(grep -i -E '[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[a-z0-9]+' "$file" || true)
+
+            for line in "${image_lines[@]}"; do
+                image=$(echo "$line" | cut -d @ -f1 | rev | cut -d = -f1 | cut -d ' ' -f1 | cut -d '"' -f1 | rev | sed -e "s/^docker:\/\///" | tr -d '' | tr -d '\t')
+                digest=$(echo "$line"| cut -d @ -f2 | cut -d ' ' -f1 | cut -d '"' -f1 | tr -d '' | tr -d '\t')
+
+                # Removing for now
+                # if [[ "$image" != *":"* ]]; then
+                #     echo "Image $image in file $file does not have a tag, ignoring..."
+                #     continue
+                # fi
+                if [[ "$image" == *\.local:* ]]; then
+                    echo "Skipping local registry image $image"
+                    continue
+                fi
+
+                echo "Processing $image in file $file"
+                echo "   crane digest \"$image\""
+
+
+                updated_digest=$(./crane digest "$image") > digest.log 2> logerror.txt
+                if [ $? -eq 0 ]; then
+                    cran=$(cat digest.log)
+                else
+                    ERRMSG="Failed to retrieve digest info for $image"
+                    echo "$ERRMSG"
+                    cat logerror.txt
+                fi
+                rm -f logerror.txt
+                rm -f digest.log
+
+                if [ "$updated_digest" != "$digest" ] && [ -n "$updated_digest" ]; then
+                    echo "Digest $digest for image $image is different, new digest is $updated_digest, updating..."
+                    sed -i -e "s|$image@$digest|$image@$updated_digest|g" "$file"
+                fi
+            done
+        done < <(find . -type f \( -name "*.yaml" -o -name "*.yml" -o -name "Dockerfile*" -o -name "Makefile*" -o -name "*.sh" \) -print0)
+
+    # Detect any changes
+    - shell: bash
+      id: trellix-digestbot-pr
+      name: Trellix Digestbot - Checking for changes and raising a PR as required.
+      run: |
+        # disable the errexit github enable that by default
+        set +o errexit
+        # Remove crane binary
+        rm ./crane
+        rm ./gh_runner_*
+
+        # Now check for changes
+        echo "--- Checking for changes"
+        git diff --name-only --quiet
+        if [ $? -eq 0 ]; then
+          echo "No changes detected. Exiting."
+          exit 0
+        fi
+        echo "--- Changes detected."
+
+        # ============== Create a new branch ==============
+        echo "--- Creating branch for the changes"
+        datetime=$(date +"%Y-%m-%d-%H%M")
+        featureBranch="image-update-$datetime"
+        echo $datetime
+        # Create the Branch
+        git checkout -b $featureBranch
+        # Add the changes
+        git add .
+        git config --global user.email "github-actions@github.com"
+        git config --global user.name "GitHub Actions"
+        git commit -m "${{ inputs.commit-message }}"
+        # Push the branch
+        git push origin $featureBranch
+
+
+        # ============== Create Pull Request ==============
+        gh --version
+        if [ $? -ne 0 ]; then
+          echo "Command 'gh' not found, unable to create pr"
+          exit 1
+        fi
+        echo "--- Command 'gh' found"
+
+        echo "--- performing gh auth login using token"
+        echo "${{ inputs.token }}" | gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token
+        if [ $? -ne 0 ]; then
+          echo "Failed to gh auth login to ${{ inputs.github_host }}"
+          exit 1
+        fi
+
+        echo "--- raise-pr-against = ${{ inputs.raise-pr-against }}"
+        prTitle="$datetime - ${{ inputs.title-for-pr }}"
+        prAgainst="${{ inputs.raise-pr-against }}"
+        prLabels="${{ inputs.labels-for-pr }}"
+        # echo "prTitle = $prTitle"
+        # echo "labels-for-pr = ${{ inputs.labels-for-pr }}"
+        # echo "featureBranch = $featureBranch"
+        # echo "raise-pr-against = ${{ inputs.raise-pr-against }}"
+        # if [[ "$prLabels" == "" ]]; then
+          echo "--- No Labels"
+          echo "gh pr create --title \"$prTitle\" --body \"This PR adds a new feature to the project.\" --head $featureBranch --base $prAgainst"
+          pullRequestNumber=$(gh pr create --title "$prTitle"  \
+            --body "This PR adds a new feature to the project."  \
+            --head $featureBranch --base ${{ inputs.raise-pr-against }} \
+            )
+        # else
+        #   echo "--- Has Labels"
+        #   echo "gh pr create --title \"$prTitle\" --body \"This PR adds a new feature to the project.\" --head $featureBranch --label \"$prLabels\" --base $prAgainst"
+        #   pullRequestNumber=$(gh pr create --title "$prTitle"  \
+        #     --label "$prLabels" \
+        #     --body "This PR adds a new feature to the project."  \
+        #     --head $featureBranch --base ${{ inputs.raise-pr-against }} \
+        #     )
+        # fi
+        if [ $? -ne 0 ]; then
+          echo "--- Failed"
+          exit 1
+        fi
+
+        echo "--- pull-request-number = $pullRequestNumber"
+        echo "### pull request" >> $GITHUB_STEP_SUMMARY && \
+        echo "$pullRequestNumber" >> $GITHUB_STEP_SUMMARY
