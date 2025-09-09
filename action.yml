@@ -183,7 +183,8 @@ runs:
         fi
         echo "--- performing gh auth login using token"
         # TODO: to be removed.
-        echo "---> token ${{ inputs.token }}"
+        echo "---> token ${{ #inputs.token }}"
+        echo "--> Token length: ${#GITHUB_TOKEN}"
         echo "---> gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token"
         echo "${{ inputs.token }}" | gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token
         if [ $? -ne 0 ]; then
@@ -223,5 +224,6 @@ runs:
         echo "--- pull-request-number = $pullRequestNumber"
         echo "### pull request" >> $GITHUB_STEP_SUMMARY && \
         echo "$pullRequestNumber" >> $GITHUB_STEP_SUMMARY
+
 
 
