@@ -186,12 +186,7 @@ runs:
         export INPUT_TOKEN="${{ inputs.token }}"
         echo "---> token ${#INPUT_TOKEN}"
         echo "--> Token length: ${#GITHUB_TOKEN}"
-        
-        echo "INPUT_TOKEN=${{ inputs.token }}" > /root/temp.txt
-        echo "GH_TOKEN=${GH_TOKEN}" >> /root/temp.txt
-
-        unset GH_TOKEN
-        
+       
         echo "---> gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token"
         echo "$INPUT_TOKEN" | gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token
         if [ $? -ne 0 ]; then
@@ -231,6 +226,7 @@ runs:
         echo "--- pull-request-number = $pullRequestNumber"
         echo "### pull request" >> $GITHUB_STEP_SUMMARY && \
         echo "$pullRequestNumber" >> $GITHUB_STEP_SUMMARY
+
 
 
 
