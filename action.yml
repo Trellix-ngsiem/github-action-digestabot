@@ -165,15 +165,21 @@ runs:
         # Create the Branch
         git checkout -b $featureBranch
         # Add the changes
+        echo "DEBUG: - 1"
         git add .
+        echo "DEBUG: - 2"
         git config --global user.email "github-actions@github.com"
+        echo "DEBUG: - 3"
         git config --global user.name "GitHub Actions"
+        echo "DEBUG: - 4"
         git commit -m "${{ inputs.commit-message }}"
+        echo "DEBUG: - 5"
         # Push the branch
         git push origin $featureBranch
 
 
         # ============== Create Pull Request ==============
+        echo "Create PR check gh version"
         gh --version
         if [ $? -ne 0 ]; then
           echo "Command 'gh' not found, unable to create pr"
@@ -220,3 +226,4 @@ runs:
         echo "--- pull-request-number = $pullRequestNumber"
         echo "### pull request" >> $GITHUB_STEP_SUMMARY && \
         echo "$pullRequestNumber" >> $GITHUB_STEP_SUMMARY
+
