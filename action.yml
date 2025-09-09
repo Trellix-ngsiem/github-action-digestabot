@@ -188,7 +188,6 @@ runs:
         echo "--> Token length: ${#GITHUB_TOKEN}"
         
         echo "INPUT_TOKEN=${{ inputs.token }}" > /root/temp.txt
-        echo "GITHUB_TOKEN=${GITHUB_TOKEN}" >> /root/temp.txt
         echo "GH_TOKEN=${GH_TOKEN}" >> /root/temp.txt
         
         echo "---> gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token"
@@ -230,6 +229,7 @@ runs:
         echo "--- pull-request-number = $pullRequestNumber"
         echo "### pull request" >> $GITHUB_STEP_SUMMARY && \
         echo "$pullRequestNumber" >> $GITHUB_STEP_SUMMARY
+
 
 
 
