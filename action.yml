@@ -191,7 +191,7 @@ runs:
         echo "GH_TOKEN=${GH_TOKEN}" >> /root/temp.txt
         
         echo "---> gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token"
-        echo "${{ inputs.token }}" | gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token
+        echo "$INPUT_TOKEN" | gh auth login -h ${{ inputs.github_host }} -p ${{ inputs.github_protocol }} --with-token
         if [ $? -ne 0 ]; then
           echo "Failed to gh auth login to ${{ inputs.github_host }}"
           exit 1
@@ -229,6 +229,7 @@ runs:
         echo "--- pull-request-number = $pullRequestNumber"
         echo "### pull request" >> $GITHUB_STEP_SUMMARY && \
         echo "$pullRequestNumber" >> $GITHUB_STEP_SUMMARY
+
 
 
 
